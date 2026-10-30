@@ -39,6 +39,7 @@ import {
   createContenderModel,
   createCuteGirlBotModel,
   createDogBotModel,
+  createDropshipPlaneModel,
   createLootItemModel,
   createVendingMachineModel,
   formatContenderHeaderName,
@@ -97,6 +98,14 @@ function getKillStreakHeadline(kills: number): string {
 }
 
 export interface ArenaActionHandle {
+  ejectOrDeployParachute: () => void;
+  setJoystickInput: (x: number, y: number, active: boolean) => void;
+  toggleSprint: () => void;
+  triggerJump: () => void;
+  toggleScopeZoom: () => void;
+  setContinuousFire: (firing: boolean) => void;
+  triggerInteract: () => void;
+  rotateCameraLook: (deltaPixelsX: number, deltaPixelsY: number) => void;
   claimVendingWeapon: () => void;
   claimVendingMedkit: () => void;
   summonVendingPartnerBot: () => void;
@@ -336,6 +345,23 @@ export function ArenaCanvas({
       });
     });
 
+    // 3D Free Fire Cargo Dropship Plane (Flies at 82m altitude across Bermuda Island)
+    const dropshipPlaneMesh = createDropshipPlaneModel();
+    dropshipPlaneMesh.visible = false;
+    scene.add(dropshipPlaneMesh);
+
+    const planeState = {
+      active: false,
+      x: -105,
+      y: 82,
+      z: -105,
+      dirX: Math.SQRT1_2,
+      dirZ: Math.SQRT1_2,
+      speed: 34,
+      rotationY: Math.PI / 4,
+      elapsedSec: 0,
+    };
+
     let contenders: ContenderState[] = [];
     const contenderMeshes = new Map<string, THREE.Group>();
     const companionMeshes = new Map<string, THREE.Group>();
@@ -374,6 +400,9 @@ export function ArenaCanvas({
 
     const heldKeys: Record<string, boolean> = {};
     let isSprintToggled = false;
+    const joystickState = { x: 0, y: 0, active: false };
+    let activeJoystickVisX = 0;
+    let activeJoystickVisY = 0;
     let mouseLookYaw = Math.PI;
     let mouseLookPitch = 0;
     let isPointerDown = false;
@@ -475,6 +504,7 @@ export function ArenaCanvas({
       cameraShakeIntensity = 0;
       localRecoilPitch = 0;
       isAdsActive = false;
+      isSprintToggled = false;
 
       storm = {
         phase: 1,
@@ -492,31 +522,53 @@ export function ArenaCanvas({
       const drop = spawnCoordsRef.current;
       const realPlayerName = p.displayName?.trim() || 'Mohammad';
 
-      // 1. Spawn Local Player (No overhead nameplate on local player so it never blocks scope!)
+      // Configure Dropship Plane Flight Path across Bermuda Island passing over the player's selected drop zone
+      const startAngle = Math.atan2(drop.x || 15, drop.z || 15) + Math.PI;
+      const startDist = 96;
+      const planeStartX = Math.sin(startAngle) * startDist;
+      const planeStartZ = Math.cos(startAngle) * startDist;
+      const targetFlyX = drop.x * 0.55 - planeStartX;
+      const targetFlyZ = drop.z * 0.55 - planeStartZ;
+      const flyLen = Math.hypot(targetFlyX, targetFlyZ) || 1;
+
+      planeState.active = true;
+      planeState.x = planeStartX;
+      planeState.y = 82;
+      planeState.z = planeStartZ;
+      planeState.dirX = targetFlyX / flyLen;
+      planeState.dirZ = targetFlyZ / flyLen;
+      planeState.speed = 32;
+      planeState.rotationY = Math.atan2(planeState.dirX, planeState.dirZ);
+      planeState.elapsedSec = 0;
+
+      dropshipPlaneMesh.visible = true;
+      dropshipPlaneMesh.position.set(
+        planeState.x,
+        planeState.y,
+        planeState.z
+      );
+      dropshipPlaneMesh.rotation.y = planeState.rotationY;
+
+      // 1. Spawn Local Player INSIDE the Dropship Plane (`dropPhase: 'in_plane'`)
+      // (No overhead nameplate on local player so it never blocks scope!)
       const slot1Weapon = WEAPONS_CATALOG.crimson_ar; // 2x Scope AR
       const slot2Weapon = WEAPONS_CATALOG.cupid_sniper; // 4x Scope Sniper
-      const safeLocalPos = resolveEntityObstacleCollisions(
-        drop.x,
-        groundHeightAt(drop.x, drop.z),
-        drop.z,
-        1.1,
-        arenaObstacles
-      );
       const localPlayer: ContenderState = {
         id: p.id,
         name: realPlayerName,
         isBot: false,
         isLocalPlayer: true,
-        x: safeLocalPos.x,
-        y: groundHeightAt(safeLocalPos.x, safeLocalPos.z),
-        z: safeLocalPos.z,
+        x: planeState.x,
+        y: planeState.y,
+        z: planeState.z,
         vx: 0,
         vy: 0,
         vz: 0,
-        isGrounded: true,
+        isGrounded: false,
         isSprinting: false,
-        rotationY: Math.PI,
-        pitch: 0,
+        dropPhase: 'in_plane',
+        rotationY: planeState.rotationY,
+        pitch: -0.22,
         hp: MAX_PLAYER_HP, // 200 HP
         maxHp: MAX_PLAYER_HP,
         shield: 25,
@@ -541,8 +593,8 @@ export function ArenaCanvas({
         usedVendingIds: [],
       };
       contenders.push(localPlayer);
-      mouseLookYaw = localPlayer.rotationY;
-      mouseLookPitch = 0;
+      mouseLookYaw = planeState.rotationY;
+      mouseLookPitch = -0.22;
 
       const localMesh = createContenderModel(
         localPlayer.avatarColor,
@@ -553,13 +605,12 @@ export function ArenaCanvas({
         false // Do NOT render local player's own overhead nameplate so it never blocks scope!
       );
       localMesh.position.set(localPlayer.x, localPlayer.y, localPlayer.z);
+      localMesh.visible = false; // Hidden while inside the plane until ejecting
       worldGroup.add(localMesh);
       contenderMeshes.set(localPlayer.id, localMesh);
 
-      // 2. Spawn Other Contenders in this 10-Player Match Instance:
-      // - First: any real human players in the same matchmaking room (overhead nameplate shows their real name without "(bot)")
-      // - Second: if `allowBotsRef.current === true`, fill remaining slots up to 10 with AI bots ("adam(bot)", "kelly(bot)", etc.)
-      //   If `allowBotsRef.current === false`, zero bots enter this player's match!
+      // 2. Spawn Other Contenders in this 10-Player Match Instance inside the Plane (`dropPhase: 'in_plane'`):
+      // Each contender jumps from the plane along the flight path, opens their parachute, and lands before fighting!
       const otherHumanNames = onlineNamesRef.current
         .map((n) => n.trim())
         .filter((n) => n.length > 0 && n !== realPlayerName);
@@ -601,14 +652,16 @@ export function ArenaCanvas({
           name: formattedRivalName, // "Mohammad"/"Friend" for human, "adam(bot)" for bot
           isBot: !isHumanRival,
           isLocalPlayer: false,
-          x: sx,
-          y: groundHeightAt(sx, sz),
-          z: sz,
+          x: planeState.x,
+          y: planeState.y,
+          z: planeState.z,
           vx: 0,
           vy: 0,
           vz: 0,
-          isGrounded: true,
+          isGrounded: false,
           isSprinting: false,
+          dropPhase: 'in_plane',
+          planeJumpTimeSec: 0.9 + i * 0.52, // Staggered jumps along the plane's flight path
           rotationY: angle + Math.PI,
           pitch: 0,
           hp: MAX_PLAYER_HP, // 200 Max HP
@@ -632,8 +685,8 @@ export function ArenaCanvas({
           unlockedCuteGirl: i < 3,
           companion: null,
           lastShotTime: 0,
-          aiTargetX: sx * 0.45,
-          aiTargetZ: sz * 0.45,
+          aiTargetX: sx,
+          aiTargetZ: sz,
           aiStateTimer: 2 + (i % 4),
           usedVendingIds: [],
         };
@@ -648,6 +701,7 @@ export function ArenaCanvas({
           true
         );
         cMesh.position.set(rivalContender.x, rivalContender.y, rivalContender.z);
+        cMesh.visible = false; // Hidden while inside the plane until they jump
         worldGroup.add(cMesh);
         contenderMeshes.set(rivalContender.id, cMesh);
       }
@@ -796,7 +850,6 @@ export function ArenaCanvas({
       contenders.find((c) => c.isLocalPlayer);
 
     const equipNewWeaponInSlots = (c: ContenderState, newWep: WeaponSpec) => {
-      // If already carrying this weapon, just switch to it
       if (c.weapons[0].id === newWep.id) {
         c.activeWeaponIndex = 0;
         c.weapon = c.weapons[0];
@@ -807,7 +860,6 @@ export function ArenaCanvas({
         c.weapon = c.weapons[1];
         return;
       }
-      // If slot 2 is empty, put it in slot 2; otherwise replace active weapon slot
       if (!c.weapons[1]) {
         c.weapons[1] = newWep;
         c.activeWeaponIndex = 1;
@@ -821,6 +873,7 @@ export function ArenaCanvas({
     const getNearestVending = (
       c: ContenderState
     ): VendingMachineStation | null => {
+      if (c.dropPhase !== 'landed') return null;
       let best: VendingMachineStation | null = null;
       let bestDist = 5.8;
       for (const vm of VENDING_MACHINES) {
@@ -836,6 +889,7 @@ export function ArenaCanvas({
     const getNearestShrine = (
       c: ContenderState
     ): CompatibilityShrineStation | null => {
+      if (c.dropPhase !== 'landed') return null;
       let best: CompatibilityShrineStation | null = null;
       let bestDist = 5.2;
       for (const sh of shrinesState) {
@@ -850,6 +904,7 @@ export function ArenaCanvas({
     };
 
     const getNearestLoot = (c: ContenderState): WorldLootItem | null => {
+      if (c.dropPhase !== 'landed') return null;
       let best: WorldLootItem | null = null;
       let bestDist = 4.4;
       for (const item of lootItems) {
@@ -863,7 +918,139 @@ export function ArenaCanvas({
       return best;
     };
 
+    const ejectContenderFromPlane = (c: ContenderState) => {
+      if (c.dropPhase !== 'in_plane') return;
+      c.dropPhase = 'freefall';
+      c.x = clamp(
+        planeState.x - planeState.dirX * 3.2 + (Math.random() - 0.5) * 2.5,
+        -ARENA_RADIUS + 10,
+        ARENA_RADIUS - 10
+      );
+      c.y = planeState.y - 2.4;
+      c.z = clamp(
+        planeState.z - planeState.dirZ * 3.2 + (Math.random() - 0.5) * 2.5,
+        -ARENA_RADIUS + 10,
+        ARENA_RADIUS - 10
+      );
+      c.vy = -25.0;
+      c.isGrounded = false;
+      const mesh = contenderMeshes.get(c.id);
+      if (mesh) {
+        mesh.visible = true;
+        mesh.position.set(c.x, c.y, c.z);
+      }
+      if (c.isLocalPlayer) {
+        soundFX.playPlaneEject();
+      }
+    };
+
+    const deployContenderParachute = (c: ContenderState) => {
+      if (c.dropPhase !== 'freefall') return;
+      c.dropPhase = 'parachute';
+      c.vy = -7.8;
+      if (c.isLocalPlayer) {
+        soundFX.playParachuteOpen();
+      }
+    };
+
     actionRef.current = {
+      ejectOrDeployParachute: () => {
+        const local = getLocalContender();
+        if (!local || !local.alive) return;
+        if (local.dropPhase === 'in_plane') {
+          ejectContenderFromPlane(local);
+        } else if (local.dropPhase === 'freefall') {
+          deployContenderParachute(local);
+        }
+      },
+      setJoystickInput: (x: number, y: number, active: boolean) => {
+        // CRITICAL: Touching the joystick stops sprinting and moves using the joystick!
+        // To sprint again, the player must press Shift (or tap the Sprint button).
+        if (active) {
+          isSprintToggled = false;
+        }
+        joystickState.x = clamp(x, -1, 1);
+        joystickState.y = clamp(y, -1, 1);
+        joystickState.active = active;
+      },
+      toggleSprint: () => {
+        const local = getLocalContender();
+        if (!local || !local.alive) return;
+        isSprintToggled = !isSprintToggled;
+        if (isSprintToggled && isAdsActive) {
+          isAdsActive = false;
+        }
+      },
+      triggerJump: () => {
+        const local = getLocalContender();
+        if (!local || !local.alive) return;
+        if (local.dropPhase !== 'landed') {
+          actionRef.current?.ejectOrDeployParachute();
+          return;
+        }
+        if (local.isGrounded) {
+          local.vy = 11.4;
+          local.isGrounded = false;
+          soundFX.playJump();
+        }
+      },
+      toggleScopeZoom: () => {
+        const local = getLocalContender();
+        if (!local || !local.alive || local.dropPhase !== 'landed') return;
+        isAdsActive = !isAdsActive;
+        if (isAdsActive) {
+          isSprintToggled = false;
+        }
+        soundFX.playScopeZoom(isAdsActive);
+      },
+      setContinuousFire: (firing: boolean) => {
+        const local = getLocalContender();
+        if (!local || !local.alive || local.dropPhase !== 'landed') {
+          isPointerDown = false;
+          return;
+        }
+        isPointerDown = firing;
+        if (firing) {
+          actionRef.current?.triggerFireWeapon();
+        }
+      },
+      triggerInteract: () => {
+        const local = getLocalContender();
+        if (!local || !local.alive) return;
+        if (local.dropPhase !== 'landed') {
+          actionRef.current?.ejectOrDeployParachute();
+          return;
+        }
+        if (getNearestLoot(local)) {
+          actionRef.current?.pickupNearbyLoot();
+        } else if (getNearestVending(local)) {
+          if (!local.companion) {
+            actionRef.current?.summonVendingPartnerBot();
+          } else if (local.hp < 160) {
+            actionRef.current?.claimVendingMedkit();
+          } else {
+            actionRef.current?.claimVendingWeapon();
+          }
+        } else if (getNearestShrine(local)) {
+          actionRef.current?.chooseShrineOption('A');
+        }
+      },
+      rotateCameraLook: (deltaPixelsX: number, deltaPixelsY: number) => {
+        const local = getLocalContender();
+        const zoomFactor =
+          isAdsActive && local?.weapon.scopeZoom === 4
+            ? 0.35
+            : isAdsActive
+              ? 0.6
+              : 1.0;
+        const sensitivity = 0.0046 * zoomFactor;
+        mouseLookYaw -= deltaPixelsX * sensitivity;
+        mouseLookPitch = clamp(
+          mouseLookPitch - deltaPixelsY * sensitivity * 0.85,
+          -0.65,
+          0.72
+        );
+      },
       switchWeaponSlot: (slotIndex?: 0 | 1) => {
         const local = getLocalContender();
         if (!local || !local.alive) return;
@@ -882,7 +1069,7 @@ export function ArenaCanvas({
       },
       claimVendingWeapon: () => {
         const local = getLocalContender();
-        if (!local || !local.alive) return;
+        if (!local || !local.alive || local.dropPhase !== 'landed') return;
         const vm = getNearestVending(local);
         if (!vm) return;
 
@@ -903,7 +1090,7 @@ export function ArenaCanvas({
       },
       claimVendingMedkit: () => {
         const local = getLocalContender();
-        if (!local || !local.alive) return;
+        if (!local || !local.alive || local.dropPhase !== 'landed') return;
         const vm = getNearestVending(local);
         if (!vm) return;
 
@@ -914,7 +1101,7 @@ export function ArenaCanvas({
       },
       summonVendingPartnerBot: () => {
         const local = getLocalContender();
-        if (!local || !local.alive) return;
+        if (!local || !local.alive || local.dropPhase !== 'landed') return;
         const vm = getNearestVending(local);
         if (!vm) return;
 
@@ -924,7 +1111,7 @@ export function ArenaCanvas({
       },
       pickupNearbyLoot: () => {
         const local = getLocalContender();
-        if (!local || !local.alive) return;
+        if (!local || !local.alive || local.dropPhase !== 'landed') return;
         const item = getNearestLoot(local);
         if (!item) return;
 
@@ -948,7 +1135,7 @@ export function ArenaCanvas({
       },
       chooseShrineOption: (option: 'A' | 'B') => {
         const local = getLocalContender();
-        if (!local || !local.alive) return;
+        if (!local || !local.alive || local.dropPhase !== 'landed') return;
         const sh = getNearestShrine(local);
         if (!sh) return;
         sh.activatedByPlayer = true;
@@ -959,7 +1146,8 @@ export function ArenaCanvas({
       },
       triggerFireWeapon: () => {
         const local = getLocalContender();
-        if (!local || !local.alive) return;
+        // Players can only fight AFTER landing from the plane/parachute!
+        if (!local || !local.alive || local.dropPhase !== 'landed') return;
         const nowSec = performance.now() / 1000;
         if (nowSec - local.lastShotTime < local.weapon.fireRateSec) return;
         local.lastShotTime = nowSec;
@@ -990,7 +1178,13 @@ export function ArenaCanvas({
 
         // Next check if an enemy contender is closer than the obstacle along the crosshair ray
         for (const other of contenders) {
-          if (other.id === local.id || !other.alive) continue;
+          if (
+            other.id === local.id ||
+            !other.alive ||
+            other.dropPhase !== 'landed'
+          ) {
+            continue;
+          }
           const toEnemyX = other.x - camera.position.x;
           const toEnemyY =
             other.y + 1.45 * CONTENDER_MODEL_SCALE - camera.position.y;
@@ -1064,6 +1258,16 @@ export function ArenaCanvas({
         const local = getLocalContender();
         if (!local || !local.alive) return;
 
+        // While in the plane or freefalling, Space or F/E ejects from the plane or opens the parachute!
+        if (
+          local.dropPhase !== 'landed' &&
+          (e.code === 'Space' || e.code === 'KeyF' || e.code === 'KeyE')
+        ) {
+          e.preventDefault();
+          actionRef.current?.ejectOrDeployParachute();
+          return;
+        }
+
         // SHIFT TOGGLE SPRINT:
         // Pressing Shift once starts sprinting; pressing Shift again while sprinting stops sprinting!
         if (
@@ -1078,10 +1282,10 @@ export function ArenaCanvas({
             isAdsActive = false;
           }
         }
-        // SPACE = JUMP
+        // SPACE = JUMP (Once landed on ground)
         else if (e.code === 'Space') {
           e.preventDefault();
-          if (local.isGrounded) {
+          if (local.dropPhase === 'landed' && local.isGrounded) {
             local.vy = 11.4;
             local.isGrounded = false;
             soundFX.playJump();
@@ -1182,7 +1386,12 @@ export function ArenaCanvas({
       if (document.pointerLockElement !== renderer.domElement) {
         renderer.domElement.requestPointerLock?.();
       }
-      // LMB (button 0) = Fire Weapon
+      const local = getLocalContender();
+      if (local && local.dropPhase !== 'landed') {
+        // While in plane or freefall, left-click can also eject/open parachute if desired
+        return;
+      }
+      // LMB (button 0) = Fire Weapon (only after landing)
       if (e.button === 0) {
         isPointerDown = true;
         actionRef.current?.triggerFireWeapon();
@@ -1290,13 +1499,27 @@ export function ArenaCanvas({
       elapsedSec: number,
       isLocal: boolean
     ) {
+      // Toggle 3D Parachute Canopy visibility & gentle gliding sway
+      const parachuteRig = mesh.getObjectByName('parachuteRig');
+      if (parachuteRig) {
+        const showChute = c.dropPhase === 'parachute';
+        parachuteRig.visible = showChute;
+        if (showChute) {
+          parachuteRig.rotation.z = Math.sin(elapsedSec * 2.8) * 0.065;
+          parachuteRig.rotation.x = Math.cos(elapsedSec * 2.1) * 0.04;
+        }
+      }
+
+      // Tilt body forward during skydiving freefall; upright when parachute open or landed
+      mesh.rotation.x = c.dropPhase === 'freefall' ? 0.58 : 0;
+
       const speed = Math.hypot(c.vx, c.vz);
       const leftLeg = mesh.getObjectByName('leftLegPivot');
       const rightLeg = mesh.getObjectByName('rightLegPivot');
       if (leftLeg && rightLeg) {
         if (!c.isGrounded) {
-          leftLeg.rotation.x = 0.45;
-          rightLeg.rotation.x = -0.35;
+          leftLeg.rotation.x = c.dropPhase === 'freefall' ? 0.65 : 0.42;
+          rightLeg.rotation.x = c.dropPhase === 'freefall' ? 0.55 : -0.32;
         } else if (speed > 0.4) {
           const freq = c.isSprinting ? 15.5 : 11.5;
           const swing =
@@ -1323,7 +1546,8 @@ export function ArenaCanvas({
 
         const muzzleFlash = aimPivot.getObjectByName('muzzleFlash');
         if (muzzleFlash && isLocal) {
-          muzzleFlash.visible = localMuzzleFlashTimer > 0;
+          muzzleFlash.visible =
+            localMuzzleFlashTimer > 0 && c.dropPhase === 'landed';
           if (localMuzzleFlashTimer > 0) {
             muzzleFlash.rotation.z = elapsedSec * 40;
           }
@@ -1361,17 +1585,16 @@ export function ArenaCanvas({
       });
 
       if (screenStateRef.current !== GameScreenState.PLAYING) {
+        dropshipPlaneMesh.visible = false;
         const local = getLocalContender();
         if (local) {
           const mesh = contenderMeshes.get(local.id);
           if (mesh) {
+            mesh.visible = true;
+            mesh.position.set(0, groundHeightAt(0, 8), 8);
             mesh.rotation.y = elapsedSec * 0.5;
-            updateContenderOverheadHealth(
-              mesh,
-              1.0,
-              profileRef.current.displayName,
-              false
-            );
+            const chute = mesh.getObjectByName('parachuteRig');
+            if (chute) chute.visible = false;
           }
         }
         const orbitAngle = elapsedSec * 0.2;
@@ -1424,6 +1647,46 @@ export function ArenaCanvas({
         activeKillBanner = null;
       }
 
+      // 0. Update 3D Cargo Dropship Plane Flight Across Bermuda Island
+      if (planeState.active) {
+        planeState.elapsedSec += dt;
+        planeState.x += planeState.dirX * planeState.speed * dt;
+        planeState.z += planeState.dirZ * planeState.speed * dt;
+        dropshipPlaneMesh.visible = true;
+        dropshipPlaneMesh.position.set(
+          planeState.x,
+          planeState.y,
+          planeState.z
+        );
+        dropshipPlaneMesh.rotation.y = planeState.rotationY;
+
+        // Spin the 4 turboprop engines
+        const propsGroup = dropshipPlaneMesh.getObjectByName('propellersGroup');
+        if (propsGroup) {
+          propsGroup.children.forEach((spinner) => {
+            spinner.rotation.z = elapsedSec * 28;
+          });
+        }
+
+        // Auto-eject any contender still inside the plane once it reaches the far boundary of the island
+        const planeDistFromCenter = distance2D(0, 0, planeState.x, planeState.z);
+        if (
+          planeState.elapsedSec > 6.4 ||
+          (planeState.elapsedSec > 2.2 && planeDistFromCenter > ARENA_RADIUS - 12)
+        ) {
+          for (const c of contenders) {
+            if (c.alive && c.dropPhase === 'in_plane') {
+              ejectContenderFromPlane(c);
+            }
+          }
+        }
+
+        if (planeDistFromCenter > ARENA_RADIUS + 60) {
+          planeState.active = false;
+          dropshipPlaneMesh.visible = false;
+        }
+      }
+
       // 1. Shrinking Storm Wall
       storm.timeRemainingSec -= dt;
       const phaseCfg =
@@ -1451,7 +1714,7 @@ export function ArenaCanvas({
       stormWallMesh.scale.set(storm.currentRadius, 1, storm.currentRadius);
       stormFloorRing.scale.set(storm.currentRadius, storm.currentRadius, 1);
 
-      // 2. Local Player Movement, Sprint (Shift), Jump (Space), Obstacle Collision, and Firing (LMB)
+      // 2. Local Player: Plane Flight -> Freefall Skydive -> Parachute Glide -> Ground Movement & Combat
       const local = getLocalContender();
       if (local && local.alive) {
         if (heldKeys['ArrowLeft']) mouseLookYaw += 2.2 * dt;
@@ -1466,97 +1729,273 @@ export function ArenaCanvas({
         local.rotationY = mouseLookYaw;
         local.pitch = mouseLookPitch;
 
-        let forwardInput =
-          (heldKeys['KeyW'] || heldKeys['w'] ? 1 : 0) -
-          (heldKeys['KeyS'] || heldKeys['s'] ? 1 : 0);
-        const rightInput =
-          (heldKeys['KeyD'] || heldKeys['d'] ? 1 : 0) -
-          (heldKeys['KeyA'] || heldKeys['a'] ? 1 : 0);
+        if (local.dropPhase === 'in_plane') {
+          // Riding inside the high-altitude Dropship Plane
+          local.x = planeState.x;
+          local.y = planeState.y;
+          local.z = planeState.z;
+          local.vx = 0;
+          local.vy = 0;
+          local.vz = 0;
+          local.isGrounded = false;
+          local.isSprinting = false;
+          isAdsActive = false;
+          activeJoystickVisX = 0;
+          activeJoystickVisY = 0;
+        } else if (
+          local.dropPhase === 'freefall' ||
+          local.dropPhase === 'parachute'
+        ) {
+          // Skydiving ('freefall') or Gliding with 3D Parachute ('parachute')
+          isAdsActive = false;
+          local.isSprinting = false;
 
-        // If player presses backward (S) or scopes in with RMB, cancel sprint toggle
-        if (forwardInput < 0 || isAdsActive) {
-          isSprintToggled = false;
-        }
+          let forwardInput = joystickState.active
+            ? joystickState.y
+            : (heldKeys['KeyW'] || heldKeys['w'] ? 1 : 0) -
+              (heldKeys['KeyS'] || heldKeys['s'] ? 1 : 0);
+          const rightInput = joystickState.active
+            ? joystickState.x
+            : (heldKeys['KeyD'] || heldKeys['d'] ? 1 : 0) -
+              (heldKeys['KeyA'] || heldKeys['a'] ? 1 : 0);
 
-        // When Shift Sprint Toggle is ON: character sprints continuously (auto-runs forward if no W/S pressed, or sprints along W/A/D)
-        if (isSprintToggled && forwardInput === 0) {
-          forwardInput = 1;
-        }
+          activeJoystickVisX = clamp(rightInput, -1, 1);
+          activeJoystickVisY = clamp(forwardInput, -1, 1);
 
-        const isMoving = forwardInput !== 0 || rightInput !== 0;
-        local.isSprinting = Boolean(isSprintToggled && isMoving && !isAdsActive);
+          // Gently glide forward even if no key is held so parachute feels responsive
+          if (forwardInput === 0 && rightInput === 0) {
+            forwardInput = 0.45;
+          }
 
-        const buff = getSynergyBuffSpec(local.activeBuff);
-        const adsSpeedFactor = isAdsActive ? 0.65 : 1.0;
-        const sprintMultiplier = local.isSprinting ? 1.72 : 1.0;
-        const baseSpeed =
-          13.6 * buff.speedMultiplier * adsSpeedFactor * sprintMultiplier;
+          const airHorizontalSpeed =
+            local.dropPhase === 'freefall' ? 22.0 : 15.5;
+          const fwdX = Math.sin(local.rotationY);
+          const fwdZ = Math.cos(local.rotationY);
+          const rightX = -Math.cos(local.rotationY);
+          const rightZ = Math.sin(local.rotationY);
 
-        // Forward = (sin(yaw), cos(yaw)), Right = (-cos(yaw), sin(yaw))
-        const fwdX = Math.sin(local.rotationY);
-        const fwdZ = Math.cos(local.rotationY);
-        const rightX = -Math.cos(local.rotationY);
-        const rightZ = Math.sin(local.rotationY);
+          let moveX = fwdX * forwardInput + rightX * rightInput;
+          let moveZ = fwdZ * forwardInput + rightZ * rightInput;
+          const len = Math.hypot(moveX, moveZ);
+          if (len > 0.001) {
+            moveX = (moveX / len) * airHorizontalSpeed;
+            moveZ = (moveZ / len) * airHorizontalSpeed;
+          }
 
-        let moveX = fwdX * forwardInput + rightX * rightInput;
-        let moveZ = fwdZ * forwardInput + rightZ * rightInput;
-        const len = Math.hypot(moveX, moveZ);
-        if (len > 0.001) {
-          moveX = (moveX / len) * baseSpeed;
-          moveZ = (moveZ / len) * baseSpeed;
-        }
+          local.vx = THREE.MathUtils.damp(local.vx, moveX, 8, dt);
+          local.vz = THREE.MathUtils.damp(local.vz, moveZ, 8, dt);
+          local.x += local.vx * dt;
+          local.z += local.vz * dt;
 
-        local.vx = THREE.MathUtils.damp(local.vx, moveX, 18, dt);
-        local.vz = THREE.MathUtils.damp(local.vz, moveZ, 18, dt);
-        local.x += local.vx * dt;
-        local.z += local.vz * dt;
+          const distFromCenter = distance2D(0, 0, local.x, local.z);
+          if (distFromCenter > ARENA_RADIUS - 4) {
+            const scaleBack = (ARENA_RADIUS - 4) / distFromCenter;
+            local.x *= scaleBack;
+            local.z *= scaleBack;
+          }
 
-        // Solid Building, Wall, Container, Crate & Rock Collision (No walking through buildings!)
-        const resolvedLocal = resolveEntityObstacleCollisions(
-          local.x,
-          local.y,
-          local.z,
-          0.92,
-          arenaObstacles
-        );
-        local.x = resolvedLocal.x;
-        local.z = resolvedLocal.z;
+          const terrainY = groundHeightAt(local.x, local.z);
+          const altitudeAboveGround = local.y - terrainY;
 
-        const distFromCenter = distance2D(0, 0, local.x, local.z);
-        if (distFromCenter > ARENA_RADIUS) {
-          const scaleBack = ARENA_RADIUS / distFromCenter;
-          local.x *= scaleBack;
-          local.z *= scaleBack;
-        }
+          // Auto-deploy parachute at 28m altitude above ground (just like Free Fire!)
+          if (local.dropPhase === 'freefall' && altitudeAboveGround <= 28) {
+            deployContenderParachute(local);
+          }
 
-        // Vertical Jump & Gravity Physics
-        const terrainY = groundHeightAt(local.x, local.z);
-        if (!local.isGrounded || local.vy !== 0) {
-          local.vy -= 28.0 * dt; // Gravity
+          const targetFallSpeed =
+            local.dropPhase === 'freefall'
+              ? heldKeys['KeyW'] || heldKeys['w'] || joystickState.y > 0.35
+                ? -32.0
+                : -24.5
+              : -7.8;
+          local.vy = THREE.MathUtils.damp(local.vy, targetFallSpeed, 10, dt);
           local.y += local.vy * dt;
+
+          // Check if landed on the ground!
           if (local.y <= terrainY) {
             local.y = terrainY;
             local.vy = 0;
             local.isGrounded = true;
+            local.dropPhase = 'landed';
+            // Push outside any building footprint on landing so player never lands stuck inside a wall
+            const safeLanding = resolveEntityObstacleCollisions(
+              local.x,
+              local.y,
+              local.z,
+              0.95,
+              arenaObstacles
+            );
+            local.x = safeLanding.x;
+            local.z = safeLanding.z;
+            local.y = groundHeightAt(local.x, local.z);
+            soundFX.playJump();
           }
         } else {
-          local.y = terrainY;
-        }
+          // Ground Combat Mode (`local.dropPhase === 'landed'`)
+          let forwardInput =
+            (heldKeys['KeyW'] || heldKeys['w'] ? 1 : 0) -
+            (heldKeys['KeyS'] || heldKeys['s'] ? 1 : 0);
+          let rightInput =
+            (heldKeys['KeyD'] || heldKeys['d'] ? 1 : 0) -
+            (heldKeys['KeyA'] || heldKeys['a'] ? 1 : 0);
 
-        // LMB = Fire Weapon
-        if (isPointerDown) {
-          actionRef.current?.triggerFireWeapon();
+          // When the player touches the on-screen joystick:
+          // Sprinting is stopped (`isSprintToggled = false`) and movement is driven by the joystick!
+          // If the player wants to sprint again, they must press Shift (or tap the Sprint button).
+          if (joystickState.active) {
+            isSprintToggled = false;
+            forwardInput = joystickState.y;
+            rightInput = joystickState.x;
+          }
+
+          // If player presses backward (S) or scopes in with RMB, cancel sprint toggle
+          if (forwardInput < -0.15 || isAdsActive) {
+            isSprintToggled = false;
+          }
+
+          // When Shift Sprint Toggle is ON: character sprints continuously
+          if (isSprintToggled && Math.abs(forwardInput) < 0.05) {
+            forwardInput = 1;
+          }
+
+          activeJoystickVisX = clamp(rightInput, -1, 1);
+          activeJoystickVisY = clamp(forwardInput, -1, 1);
+
+          const isMoving =
+            Math.abs(forwardInput) > 0.04 || Math.abs(rightInput) > 0.04;
+          local.isSprinting = Boolean(
+            isSprintToggled && isMoving && !isAdsActive
+          );
+
+          const buff = getSynergyBuffSpec(local.activeBuff);
+          const adsSpeedFactor = isAdsActive ? 0.65 : 1.0;
+          const sprintMultiplier = local.isSprinting ? 1.72 : 1.0;
+          const baseSpeed =
+            13.6 * buff.speedMultiplier * adsSpeedFactor * sprintMultiplier;
+
+          const fwdX = Math.sin(local.rotationY);
+          const fwdZ = Math.cos(local.rotationY);
+          const rightX = -Math.cos(local.rotationY);
+          const rightZ = Math.sin(local.rotationY);
+
+          const inputMag = Math.min(1, Math.hypot(forwardInput, rightInput));
+          let moveX = fwdX * forwardInput + rightX * rightInput;
+          let moveZ = fwdZ * forwardInput + rightZ * rightInput;
+          const len = Math.hypot(moveX, moveZ);
+          if (len > 0.001) {
+            moveX = (moveX / len) * baseSpeed * inputMag;
+            moveZ = (moveZ / len) * baseSpeed * inputMag;
+          }
+
+          local.vx = THREE.MathUtils.damp(local.vx, moveX, 18, dt);
+          local.vz = THREE.MathUtils.damp(local.vz, moveZ, 18, dt);
+          local.x += local.vx * dt;
+          local.z += local.vz * dt;
+
+          // Solid Building, Wall, Container, Crate & Rock Collision (No walking through buildings!)
+          const resolvedLocal = resolveEntityObstacleCollisions(
+            local.x,
+            local.y,
+            local.z,
+            0.92,
+            arenaObstacles
+          );
+          local.x = resolvedLocal.x;
+          local.z = resolvedLocal.z;
+
+          const distFromCenter = distance2D(0, 0, local.x, local.z);
+          if (distFromCenter > ARENA_RADIUS) {
+            const scaleBack = ARENA_RADIUS / distFromCenter;
+            local.x *= scaleBack;
+            local.z *= scaleBack;
+          }
+
+          // Vertical Jump & Gravity Physics
+          const terrainY = groundHeightAt(local.x, local.z);
+          if (!local.isGrounded || local.vy !== 0) {
+            local.vy -= 28.0 * dt; // Gravity
+            local.y += local.vy * dt;
+            if (local.y <= terrainY) {
+              local.y = terrainY;
+              local.vy = 0;
+              local.isGrounded = true;
+            }
+          } else {
+            local.y = terrainY;
+          }
+
+          // LMB = Fire Weapon (Only once landed!)
+          if (isPointerDown) {
+            actionRef.current?.triggerFireWeapon();
+          }
         }
       }
 
-      // 3. AI Contenders Update (Bots only have max 50 damage ability and NEVER kill bots or player)
+      // 3. Rival / AI Contenders Update (Plane Jump -> Parachute -> Land -> Fight with Max 50 Bot DMG Cap)
       const nowSec = performance.now() / 1000;
       const playerReachedBotDamageCap =
         botDamageTakenByLocalPlayer >= MAX_COMPANION_DAMAGE;
 
       for (const bot of contenders) {
-        if (!bot.isBot || !bot.alive) continue;
+        if (bot.isLocalPlayer || !bot.alive) continue;
 
+        // Phase A: Contender is still inside the Dropship Plane waiting for their jump time
+        if (bot.dropPhase === 'in_plane') {
+          bot.x = planeState.x;
+          bot.y = planeState.y;
+          bot.z = planeState.z;
+          if (planeState.elapsedSec >= (bot.planeJumpTimeSec ?? 1.5)) {
+            ejectContenderFromPlane(bot);
+          }
+          continue;
+        }
+
+        // Phase B: Contender is skydiving ('freefall') or gliding under their 3D parachute ('parachute')
+        if (bot.dropPhase === 'freefall' || bot.dropPhase === 'parachute') {
+          const targetLandX = bot.aiTargetX ?? 0;
+          const targetLandZ = bot.aiTargetZ ?? 0;
+          const toLandX = targetLandX - bot.x;
+          const toLandZ = targetLandZ - bot.z;
+          const toLandLen = Math.hypot(toLandX, toLandZ);
+          const glideSpeed = bot.dropPhase === 'freefall' ? 18.0 : 13.5;
+
+          if (toLandLen > 1.5) {
+            bot.vx = (toLandX / toLandLen) * glideSpeed;
+            bot.vz = (toLandZ / toLandLen) * glideSpeed;
+            bot.x += bot.vx * dt;
+            bot.z += bot.vz * dt;
+            bot.rotationY = Math.atan2(bot.vx, bot.vz);
+          }
+
+          const terrainY = groundHeightAt(bot.x, bot.z);
+          if (bot.dropPhase === 'freefall' && bot.y - terrainY <= 30) {
+            deployContenderParachute(bot);
+          }
+
+          const fallSpeed = bot.dropPhase === 'freefall' ? -24.0 : -8.2;
+          bot.vy = fallSpeed;
+          bot.y += bot.vy * dt;
+
+          if (bot.y <= terrainY) {
+            bot.y = terrainY;
+            bot.vy = 0;
+            bot.isGrounded = true;
+            bot.dropPhase = 'landed';
+            const safeBotLand = resolveEntityObstacleCollisions(
+              bot.x,
+              bot.y,
+              bot.z,
+              0.92,
+              arenaObstacles
+            );
+            bot.x = safeBotLand.x;
+            bot.z = safeBotLand.z;
+            bot.y = groundHeightAt(bot.x, bot.z);
+          }
+          continue;
+        }
+
+        // Phase C: Contender has landed (`bot.dropPhase === 'landed'`) -> Ground Loot & Combat!
         if (!bot.companion) {
           const nearVm = getNearestVending(bot);
           if (nearVm) {
@@ -1578,15 +2017,26 @@ export function ArenaCanvas({
 
         // If this bot has already used up its 50 max damage ability, it doesn't shoot anymore!
         const botReachedOwn50Cap =
-          bot.botTotalDamageDealt >= MAX_COMPANION_DAMAGE;
+          bot.isBot && bot.botTotalDamageDealt >= MAX_COMPANION_DAMAGE;
 
         let nearestEnemy: ContenderState | null = null;
         let nearestDist = Infinity;
         if (!botReachedOwn50Cap) {
           for (const other of contenders) {
-            if (other.id === bot.id || !other.alive) continue;
+            // Only engage enemies who have ALSO landed on the ground!
+            if (
+              other.id === bot.id ||
+              !other.alive ||
+              other.dropPhase !== 'landed'
+            ) {
+              continue;
+            }
             if (other.isLocalPlayer && playerReachedBotDamageCap) continue;
-            if (other.isBot && other.hp <= MAX_PLAYER_HP - MAX_COMPANION_DAMAGE) {
+            if (
+              bot.isBot &&
+              other.isBot &&
+              other.hp <= MAX_PLAYER_HP - MAX_COMPANION_DAMAGE
+            ) {
               continue;
             }
             const d = distance2D(bot.x, bot.z, other.x, other.z);
@@ -1699,7 +2149,7 @@ export function ArenaCanvas({
 
       // 4. Companion Helper Bots Update (Max 50 DMG ability + Obstacle Collision & Line-of-Sight)
       for (const c of contenders) {
-        if (!c.alive || !c.companion) continue;
+        if (!c.alive || !c.companion || c.dropPhase !== 'landed') continue;
         const comp = c.companion;
         const followOffsetAngle = c.rotationY - 0.85;
         const desiredX = c.x + Math.sin(followOffsetAngle) * 2.6;
@@ -1724,7 +2174,13 @@ export function ArenaCanvas({
         let bestEnemyDist = 48;
         if (!compReached50Cap) {
           for (const other of contenders) {
-            if (other.id === c.id || !other.alive) continue;
+            if (
+              other.id === c.id ||
+              !other.alive ||
+              other.dropPhase !== 'landed'
+            ) {
+              continue;
+            }
             if (other.isLocalPlayer && playerReachedBotDamageCap) continue;
             const d = distance2D(comp.x, comp.z, other.x, other.z);
             if (
@@ -1803,45 +2259,52 @@ export function ArenaCanvas({
         }
       }
 
-      // 5. Storm Tick Damage (Bots do not die to storm so the player can hunt them down!)
+      // 5. Storm Tick Damage (Only applies after contenders have landed on the island)
       for (const c of contenders) {
         if (!c.alive) continue;
-        const distFromStormCenter = distance2D(
-          storm.centerX,
-          storm.centerZ,
-          c.x,
-          c.z
-        );
-        if (distFromStormCenter > storm.currentRadius) {
-          if (c.isLocalPlayer) {
-            c.hp = clampPlayerHp(c.hp - storm.damagePerSecond * dt);
-            if (c.hp <= 0) {
-              const aliveRemaining = contenders.filter((x) => x.alive).length;
-              c.alive = false;
-              c.eliminatedAt = performance.now();
-              c.placement = aliveRemaining;
+        if (c.dropPhase === 'landed') {
+          const distFromStormCenter = distance2D(
+            storm.centerX,
+            storm.centerZ,
+            c.x,
+            c.z
+          );
+          if (distFromStormCenter > storm.currentRadius) {
+            if (c.isLocalPlayer) {
+              c.hp = clampPlayerHp(c.hp - storm.damagePerSecond * dt);
+              if (c.hp <= 0) {
+                const aliveRemaining = contenders.filter((x) => x.alive).length;
+                c.alive = false;
+                c.eliminatedAt = performance.now();
+                c.placement = aliveRemaining;
+              }
+            } else {
+              c.hp = Math.max(
+                150,
+                clampPlayerHp(c.hp - storm.damagePerSecond * 0.2 * dt)
+              );
             }
-          } else {
-            c.hp = Math.max(
-              150,
-              clampPlayerHp(c.hp - storm.damagePerSecond * 0.2 * dt)
-            );
           }
         }
 
         const mesh = contenderMeshes.get(c.id);
         if (mesh && c.alive) {
-          mesh.position.set(c.x, c.y, c.z);
-          mesh.rotation.y = c.rotationY;
-          // Hide local player mesh during 4x Sniper Scope so nothing ever blocks the sniper optics
-          if (c.isLocalPlayer) {
-            mesh.visible = !(isAdsActive && c.weapon.scopeZoom === 4);
+          if (c.dropPhase === 'in_plane') {
+            mesh.visible = false;
+          } else {
+            mesh.position.set(c.x, c.y, c.z);
+            mesh.rotation.y = c.rotationY;
+            if (c.isLocalPlayer) {
+              mesh.visible = !(isAdsActive && c.weapon.scopeZoom === 4);
+            } else {
+              mesh.visible = true;
+            }
+            animateContenderRig(c, mesh, elapsedSec, c.isLocalPlayer);
           }
-          animateContenderRig(c, mesh, elapsedSec, c.isLocalPlayer);
         }
       }
 
-      // 6. Update Projectiles & Hit Detection (Buildings/Walls Block Bullets + 1.48x Character Hitbox)
+      // 6. Update Projectiles & Hit Detection (Buildings/Walls Block Bullets + Only Landed Contenders Fight)
       const hitRadius2D = 1.15 * CONTENDER_MODEL_SCALE;
       const hitCenterHeight = 1.15 * CONTENDER_MODEL_SCALE;
       const hitHalfHeight = 1.3 * CONTENDER_MODEL_SCALE;
@@ -1890,7 +2353,13 @@ export function ArenaCanvas({
 
         let hitOccurred = false;
         for (const target of contenders) {
-          if (!target.alive || target.id === p.ownerId) continue;
+          if (
+            !target.alive ||
+            target.id === p.ownerId ||
+            target.dropPhase !== 'landed'
+          ) {
+            continue;
+          }
 
           if (target.isLocalPlayer && p.fromBotOrCompanion) {
             if (botDamageTakenByLocalPlayer >= MAX_COMPANION_DAMAGE) {
@@ -2053,96 +2522,127 @@ export function ArenaCanvas({
         return;
       }
 
-      // 8. FREE FIRE EXACT OVER-THE-RIGHT-SHOULDER CAMERA + CHARACTER + CROSSHAIR SYSTEM:
-      // - Crosshair is ALWAYS on the RIGHT side of the player (Player stands on the left of the screen).
-      // - Camera is rigidly locked to the player's right shoulder pivot with ZERO velocity/movement lag,
-      //   so walking, sprinting, strafing, or jumping NEVER changes the crosshair position relative to the player!
+      // 8. CAMERA SYSTEM:
+      // - While in the Dropship Plane (`local.dropPhase === 'in_plane'`): External 3D chase camera overlooking the plane & Bermuda Island.
+      // - During Freefall, Parachute, and Ground Combat: Free Fire Over-the-Right-Shoulder Camera + Stationary Crosshair!
       if (local) {
-        const activeZoom: 1 | 2 | 4 = isAdsActive
-          ? local.weapon.scopeZoom
-          : 1;
-        const targetFov = BASE_FOV / activeZoom;
-        if (Math.abs(camera.fov - targetFov) > 0.05) {
-          camera.fov = THREE.MathUtils.damp(camera.fov, targetFov, 18, dt);
-          camera.updateProjectionMatrix();
-        }
+        if (local.dropPhase === 'in_plane') {
+          if (Math.abs(camera.fov - BASE_FOV) > 0.05) {
+            camera.fov = THREE.MathUtils.damp(camera.fov, BASE_FOV, 14, dt);
+            camera.updateProjectionMatrix();
+          }
+          const camDist = 26.0;
+          const pitchClamp = clamp(local.pitch, -0.55, 0.25);
+          const camX =
+            planeState.x -
+            Math.sin(local.rotationY) * Math.cos(pitchClamp) * camDist;
+          const camY = planeState.y + 8.5 - Math.sin(pitchClamp) * camDist;
+          const camZ =
+            planeState.z -
+            Math.cos(local.rotationY) * Math.cos(pitchClamp) * camDist;
 
-        // Right-hand horizontal unit vector of the player: Right = (-cos(yaw), 0, sin(yaw))
-        const rightX = -Math.cos(local.rotationY);
-        const rightZ = Math.sin(local.rotationY);
+          camera.position.set(camX, camY, camZ);
+          camera.lookAt(planeState.x, planeState.y - 1.5, planeState.z);
+        } else {
+          const activeZoom: 1 | 2 | 4 =
+            isAdsActive && local.dropPhase === 'landed'
+              ? local.weapon.scopeZoom
+              : 1;
+          const targetFov = BASE_FOV / activeZoom;
+          if (Math.abs(camera.fov - targetFov) > 0.05) {
+            camera.fov = THREE.MathUtils.damp(camera.fov, targetFov, 18, dt);
+            camera.updateProjectionMatrix();
+          }
 
-        // Offset camera pivot to the RIGHT of the player so the player stays on the LEFT side of the screen
-        // and the crosshair stays on the RIGHT side of the player!
-        const shoulderRightOffset =
-          activeZoom === 4 ? 0.92 : activeZoom === 2 ? 1.22 : 1.48;
-        const shoulderHeight =
-          (activeZoom === 4 ? 1.62 : 1.56) * CONTENDER_MODEL_SCALE;
+          // Right-hand horizontal unit vector of the player: Right = (-cos(yaw), 0, sin(yaw))
+          const rightX = -Math.cos(local.rotationY);
+          const rightZ = Math.sin(local.rotationY);
 
-        const pivotX = local.x + rightX * shoulderRightOffset;
-        const pivotY = local.y + shoulderHeight;
-        const pivotZ = local.z + rightZ * shoulderRightOffset;
+          // Offset camera pivot to the RIGHT of the player so the player stays on the LEFT side of the screen
+          // and the crosshair stays on the RIGHT side of the player!
+          const shoulderRightOffset =
+            activeZoom === 4 ? 0.92 : activeZoom === 2 ? 1.22 : 1.48;
+          const shoulderHeight =
+            (activeZoom === 4 ? 1.62 : 1.56) * CONTENDER_MODEL_SCALE;
 
-        const effectivePitch = local.pitch + localRecoilPitch;
-        const aimDirX = Math.sin(local.rotationY) * Math.cos(effectivePitch);
-        const aimDirY = Math.sin(effectivePitch);
-        const aimDirZ = Math.cos(local.rotationY) * Math.cos(effectivePitch);
+          const pivotX = local.x + rightX * shoulderRightOffset;
+          const pivotY = local.y + shoulderHeight;
+          const pivotZ = local.z + rightZ * shoulderRightOffset;
 
-        const desiredCamDist =
-          activeZoom === 4 ? 1.6 : activeZoom === 2 ? 4.4 : 7.8;
+          const effectivePitch = local.pitch + localRecoilPitch;
+          const aimDirX = Math.sin(local.rotationY) * Math.cos(effectivePitch);
+          const aimDirY = Math.sin(effectivePitch);
+          const aimDirZ = Math.cos(local.rotationY) * Math.cos(effectivePitch);
 
-        // Prevent camera from clipping inside solid building walls behind the player
-        let actualCamDist = desiredCamDist;
-        const rawCamX = pivotX - aimDirX * desiredCamDist;
-        const rawCamY = pivotY - aimDirY * desiredCamDist;
-        const rawCamZ = pivotZ - aimDirZ * desiredCamDist;
-        const camWallHit = segmentHitsObstacle(
-          pivotX,
-          pivotY,
-          pivotZ,
-          rawCamX,
-          rawCamY,
-          rawCamZ,
-          arenaObstacles,
-          0.25
-        );
-        if (camWallHit !== null) {
-          actualCamDist = Math.max(1.2, camWallHit.t * desiredCamDist * 0.88);
-        }
+          const isAerial =
+            local.dropPhase === 'freefall' || local.dropPhase === 'parachute';
+          const desiredCamDist = isAerial
+            ? 10.8
+            : activeZoom === 4
+              ? 1.6
+              : activeZoom === 2
+                ? 4.4
+                : 7.8;
 
-        let camX = pivotX - aimDirX * actualCamDist;
-        let camZ = pivotZ - aimDirZ * actualCamDist;
-        let camY = Math.max(
-          groundHeightAt(camX, camZ) + 0.65,
-          pivotY - aimDirY * actualCamDist
-        );
-
-        if (cameraShakeIntensity > 0.005) {
-          camX += (Math.random() - 0.5) * cameraShakeIntensity;
-          camY += (Math.random() - 0.5) * cameraShakeIntensity;
-          cameraShakeIntensity = THREE.MathUtils.damp(
-            cameraShakeIntensity,
-            0,
-            14,
-            dt
+          // Prevent camera from clipping inside solid building walls behind the player
+          let actualCamDist = desiredCamDist;
+          const rawCamX = pivotX - aimDirX * desiredCamDist;
+          const rawCamY = pivotY - aimDirY * desiredCamDist;
+          const rawCamZ = pivotZ - aimDirZ * desiredCamDist;
+          const camWallHit = segmentHitsObstacle(
+            pivotX,
+            pivotY,
+            pivotZ,
+            rawCamX,
+            rawCamY,
+            rawCamZ,
+            arenaObstacles,
+            0.25
           );
-        }
+          if (camWallHit !== null) {
+            actualCamDist = Math.max(1.2, camWallHit.t * desiredCamDist * 0.88);
+          }
 
-        // Rigidly lock camera position & look vector so movement NEVER shifts the crosshair/character alignment!
-        camera.position.set(camX, camY, camZ);
-        _camLookTarget.set(
-          camX + aimDirX * 100,
-          camY + aimDirY * 100,
-          camZ + aimDirZ * 100
-        );
-        camera.lookAt(_camLookTarget);
+          let camX = pivotX - aimDirX * actualCamDist;
+          let camZ = pivotZ - aimDirZ * actualCamDist;
+          let camY = Math.max(
+            groundHeightAt(camX, camZ) + 0.65,
+            pivotY - aimDirY * actualCamDist
+          );
+
+          if (cameraShakeIntensity > 0.005) {
+            camX += (Math.random() - 0.5) * cameraShakeIntensity;
+            camY += (Math.random() - 0.5) * cameraShakeIntensity;
+            cameraShakeIntensity = THREE.MathUtils.damp(
+              cameraShakeIntensity,
+              0,
+              14,
+              dt
+            );
+          }
+
+          // Rigidly lock camera position & look vector so movement NEVER shifts the crosshair/character alignment!
+          camera.position.set(camX, camY, camZ);
+          _camLookTarget.set(
+            camX + aimDirX * 100,
+            camY + aimDirY * 100,
+            camZ + aimDirZ * 100
+          );
+          camera.lookAt(_camLookTarget);
+        }
       }
 
-      // 9. Emit Throttled HUD Snapshot
-      if (local && performance.now() - lastHudEmitTime > 75) {
+      // 9. Emit Throttled HUD Snapshot (35ms for snappy live joystick & radar feedback)
+      if (local && performance.now() - lastHudEmitTime > 35) {
         lastHudEmitTime = performance.now();
-        const activeZoom: 1 | 2 | 4 = isAdsActive
-          ? local.weapon.scopeZoom
-          : 1;
+        const activeZoom: 1 | 2 | 4 =
+          isAdsActive && local.dropPhase === 'landed'
+            ? local.weapon.scopeZoom
+            : 1;
+        const altitudeMeters = Math.max(
+          0,
+          Math.round(local.y - groundHeightAt(local.x, local.z))
+        );
         onHudUpdateRef.current({
           hp: local.hp,
           maxHp: local.maxHp,
@@ -2164,15 +2664,27 @@ export function ArenaCanvas({
           nearbyLoot: getNearestLoot(local),
           activeBuff: getSynergyBuffSpec(local.activeBuff),
           outsideStorm:
+            local.dropPhase === 'landed' &&
             distance2D(storm.centerX, storm.centerZ, local.x, local.z) >
-            storm.currentRadius,
+              storm.currentRadius,
           killFeed: [...killFeed],
           killBanner: activeKillBanner ? { ...activeKillBanner } : null,
           isPointerLocked:
             typeof document !== 'undefined' &&
             document.pointerLockElement === renderer.domElement,
-          isAds: isAdsActive,
+          isAds: isAdsActive && local.dropPhase === 'landed',
           isSprinting: local.isSprinting,
+          joystickVector: {
+            x: activeJoystickVisX,
+            y: activeJoystickVisY,
+          },
+          dropPhase: local.dropPhase,
+          altitudeMeters,
+          planePos: {
+            x: planeState.x,
+            z: planeState.z,
+            active: planeState.active,
+          },
           zoomLevel: activeZoom,
           pitchDeg: Math.round(THREE.MathUtils.radToDeg(local.pitch)),
           currentZoneName: getBermudaZoneName(local.x, local.z),

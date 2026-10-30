@@ -369,7 +369,216 @@ export function createContenderModel(
   aimPivot.add(gunGroup);
 
   group.add(aimPivot);
+
+  // 8: Free Fire Arch-Wing Parachute Canopy & Suspension Cords (`parachuteRig`)
+  const parachuteRig = new THREE.Group();
+  parachuteRig.name = 'parachuteRig';
+  parachuteRig.visible = false;
+
+  const canopyMainMat = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(armorHex),
+    roughness: 0.45,
+    metalness: 0.15,
+    side: THREE.DoubleSide,
+  });
+  const canopyStripeMat = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(visorHex),
+    emissive: new THREE.Color(visorHex),
+    emissiveIntensity: 0.35,
+    roughness: 0.35,
+    metalness: 0.25,
+    side: THREE.DoubleSide,
+  });
+  const cordMat = new THREE.MeshBasicMaterial({ color: 0xe2e8f0 });
+
+  // Segmented arch-wing parachute canopy above the character
+  for (let seg = -3; seg <= 3; seg++) {
+    const segGroup = new THREE.Group();
+    const angle = seg * 0.16;
+    const cellMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.46, 0.16, 1.35),
+      Math.abs(seg) % 2 === 1 ? canopyStripeMat : canopyMainMat
+    );
+    cellMesh.position.set(
+      Math.sin(angle) * 2.5,
+      3.45 + Math.cos(angle) * 0.45,
+      -0.1
+    );
+    cellMesh.rotation.z = -angle * 0.85;
+    segGroup.add(cellMesh);
+    parachuteRig.add(segGroup);
+  }
+
+  // 4 Suspension Riser Cords connecting backpack shoulders to canopy
+  const cordOffsets = [
+    [-0.95, 2.55, 0.25],
+    [0.95, 2.55, 0.25],
+    [-0.95, 2.55, -0.35],
+    [0.95, 2.55, -0.35],
+  ];
+  cordOffsets.forEach(([cx, cy, cz]) => {
+    const cord = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.012, 0.012, 2.45, 6),
+      cordMat
+    );
+    cord.position.set(cx * 0.55, cy, cz * 0.6);
+    cord.rotation.z = cx > 0 ? -0.34 : 0.34;
+    cord.rotation.x = cz > 0 ? 0.12 : -0.12;
+    parachuteRig.add(cord);
+  });
+
+  group.add(parachuteRig);
   return group;
+}
+
+/**
+ * Builds the 3D Battle Royale C-130 Cargo Dropship Plane (`THREE.Group`)
+ * that flies across Bermuda Island at the start of every match.
+ */
+export function createDropshipPlaneModel(): THREE.Group {
+  const plane = new THREE.Group();
+
+  const hullMat = new THREE.MeshStandardMaterial({
+    color: 0x334155,
+    roughness: 0.42,
+    metalness: 0.65,
+  });
+  const stripeMat = new THREE.MeshStandardMaterial({
+    color: 0xf43f5e,
+    emissive: 0xe11d48,
+    emissiveIntensity: 0.55,
+    roughness: 0.28,
+    metalness: 0.5,
+  });
+  const darkMetalMat = new THREE.MeshStandardMaterial({
+    color: 0x0f172a,
+    roughness: 0.3,
+    metalness: 0.85,
+  });
+  const cockpitGlassMat = new THREE.MeshStandardMaterial({
+    color: 0x38bdf8,
+    emissive: 0x0284c7,
+    emissiveIntensity: 0.5,
+    roughness: 0.15,
+    metalness: 0.9,
+  });
+
+  // Main Cargo Fuselage
+  const fuselage = new THREE.Mesh(
+    new THREE.CylinderGeometry(2.1, 2.2, 20, 16),
+    hullMat
+  );
+  fuselage.rotation.x = Math.PI / 2;
+  fuselage.castShadow = true;
+  plane.add(fuselage);
+
+  // Nose Cone & Cockpit Windshield
+  const nose = new THREE.Mesh(
+    new THREE.ConeGeometry(2.1, 4.5, 16),
+    hullMat
+  );
+  nose.rotation.x = Math.PI / 2;
+  nose.position.set(0, 0, 12.25);
+  const windshield = new THREE.Mesh(
+    new THREE.BoxGeometry(2.4, 0.85, 1.8),
+    cockpitGlassMat
+  );
+  windshield.position.set(0, 1.1, 10.2);
+  windshield.rotation.x = 0.25;
+  plane.add(nose, windshield);
+
+  // Glowing Rear Jump Ramp (Open Cargo Bay)
+  const rearRamp = new THREE.Mesh(
+    new THREE.BoxGeometry(2.8, 0.25, 4.2),
+    darkMetalMat
+  );
+  rearRamp.position.set(0, -1.45, -11.2);
+  rearRamp.rotation.x = 0.38;
+  const cargoGlow = new THREE.Mesh(
+    new THREE.BoxGeometry(2.6, 2.2, 0.4),
+    stripeMat
+  );
+  cargoGlow.position.set(0, 0, -9.9);
+  plane.add(rearRamp, cargoGlow);
+
+  // Crimson Racing Stripe along Fuselage Sides
+  const sideStripe = new THREE.Mesh(
+    new THREE.BoxGeometry(4.35, 0.42, 17.5),
+    stripeMat
+  );
+  sideStripe.position.set(0, 0.2, 0);
+  plane.add(sideStripe);
+
+  // High Main Wings (28m Wingspan)
+  const mainWing = new THREE.Mesh(
+    new THREE.BoxGeometry(28, 0.38, 3.8),
+    hullMat
+  );
+  mainWing.position.set(0, 1.55, 1.0);
+  mainWing.castShadow = true;
+  plane.add(mainWing);
+
+  // Wingtip Navigation Beacons
+  const leftBeacon = new THREE.Mesh(
+    new THREE.SphereGeometry(0.32, 8, 8),
+    new THREE.MeshBasicMaterial({ color: 0xef4444 })
+  );
+  leftBeacon.position.set(-14.1, 1.65, 1.0);
+  const rightBeacon = new THREE.Mesh(
+    new THREE.SphereGeometry(0.32, 8, 8),
+    new THREE.MeshBasicMaterial({ color: 0x10b981 })
+  );
+  rightBeacon.position.set(14.1, 1.65, 1.0);
+  plane.add(leftBeacon, rightBeacon);
+
+  // Tail Vertical Fin & Horizontal Stabilizer
+  const tailFin = new THREE.Mesh(
+    new THREE.BoxGeometry(0.45, 5.2, 3.8),
+    hullMat
+  );
+  tailFin.position.set(0, 3.8, -8.2);
+  tailFin.rotation.x = -0.2;
+  const tailStripe = new THREE.Mesh(
+    new THREE.BoxGeometry(0.52, 1.2, 3.6),
+    stripeMat
+  );
+  tailStripe.position.set(0, 5.4, -8.4);
+  const hStab = new THREE.Mesh(
+    new THREE.BoxGeometry(9.6, 0.28, 2.4),
+    hullMat
+  );
+  hStab.position.set(0, 1.6, -8.6);
+  plane.add(tailFin, tailStripe, hStab);
+
+  // 4 Turboprop Engine Nacelles & Spinning Propellers
+  const propellersGroup = new THREE.Group();
+  propellersGroup.name = 'propellersGroup';
+  const engineXOffsets = [-9.5, -5.2, 5.2, 9.5];
+  engineXOffsets.forEach((ex) => {
+    const nacelle = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.58, 0.52, 2.8, 12),
+      darkMetalMat
+    );
+    nacelle.rotation.x = Math.PI / 2;
+    nacelle.position.set(ex, 1.15, 2.2);
+    plane.add(nacelle);
+
+    const propSpinner = new THREE.Group();
+    propSpinner.position.set(ex, 1.15, 3.68);
+    const blade1 = new THREE.Mesh(
+      new THREE.BoxGeometry(2.3, 0.22, 0.06),
+      stripeMat
+    );
+    const blade2 = new THREE.Mesh(
+      new THREE.BoxGeometry(0.22, 2.3, 0.06),
+      stripeMat
+    );
+    propSpinner.add(blade1, blade2);
+    propellersGroup.add(propSpinner);
+  });
+  plane.add(propellersGroup);
+
+  return plane;
 }
 
 export function createCuteGirlBotModel(personaId: GirlPersonaId = 'aiko'): THREE.Group {

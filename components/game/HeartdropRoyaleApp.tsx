@@ -12,6 +12,7 @@ import {
 } from '@/components/game/MatchmakingOverlay';
 import { MatchSummaryModal } from '@/components/game/MatchSummaryModal';
 import { TopThreeRewardModal } from '@/components/game/TopThreeRewardModal';
+import { PortraitRotateOverlay } from '@/components/ui/PortraitRotateOverlay';
 import { SectionModal } from '@/components/ui/SectionModal';
 import { clientConnection } from '@/lib/client-connection';
 import {
@@ -94,6 +95,10 @@ const INITIAL_HUD: CombatHudSnapshot = {
   isPointerLocked: false,
   isAds: false,
   isSprinting: false,
+  joystickVector: { x: 0, y: 0 },
+  dropPhase: 'in_plane',
+  altitudeMeters: 82,
+  planePos: { x: -96, z: -96, active: true },
   zoomLevel: 1,
   pitchDeg: 0,
   currentZoneName: 'Bimasakti Strip',
@@ -351,6 +356,9 @@ export function HeartdropRoyaleApp() {
 
   return (
     <main className="relative w-screen h-screen overflow-hidden bg-[#0B0F19]">
+      {/* Enforce Landscape Mode on Portrait Mobile Devices */}
+      <PortraitRotateOverlay />
+
       {/* Persistent Isolated 3D WebGL Bermuda Arena Canvas */}
       <ArenaCanvas
         screenState={screenState}

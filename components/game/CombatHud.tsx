@@ -8,17 +8,20 @@ import {
   Heart,
   MapPin,
   Pause,
+  Plane,
   Shield,
   ShieldCheck,
   Skull,
   Sparkles,
   Volume2,
   VolumeX,
+  Wind,
   Zap,
 } from 'lucide-react';
 import { ARENA_RADIUS, MAX_COMPANION_DAMAGE } from '@/lib/constants';
 import { formatTimeMMSS } from '@/lib/game-utils';
 import { ArenaActionHandle } from '@/components/game/ArenaCanvas';
+import { TouchControlsHud } from '@/components/game/TouchControlsHud';
 import { CombatHudSnapshot, PlayerProfile } from '@/types/game';
 
 interface CombatHudProps {
@@ -285,6 +288,20 @@ export function CombatHud({
                 />
               );
             })}
+            {/* Dropship Plane Icon on Radar */}
+            {hud.planePos?.active && (
+              <div
+                className="absolute text-amber-300 drop-shadow"
+                style={{
+                  left: `${50 + (hud.planePos.x / ARENA_RADIUS) * 46}%`,
+                  top: `${50 + (hud.planePos.z / ARENA_RADIUS) * 46}%`,
+                  transform: 'translate(-50%, -50%)',
+                }}
+                title="Cargo Dropship Plane"
+              >
+                <Plane className="w-3.5 h-3.5 fill-amber-400 text-amber-200" />
+              </div>
+            )}
           </div>
           <div className="flex items-center justify-between text-[11px] text-slate-400">
             <span>Bermuda Map</span>
@@ -400,8 +417,76 @@ export function CombatHud({
         </div>
       </div>
 
-      {/* Contextual World Prompts Below Crosshair (Loot [F], Vending [F], Shrine [F]) */}
+      {/* Contextual World Prompts Below Crosshair (Plane Jump, Parachute Open, Loot [F], Vending [F], Shrine [F]) */}
       <div className="relative z-20 flex flex-col items-center justify-end gap-2 mt-auto mb-4">
+        {/* Free Fire Dropship Plane Jump / Freefall / Parachute Altimeter & Action Banner */}
+        {hud.dropPhase !== 'landed' && (
+          <div className="pointer-events-auto bg-slate-950/95 border-2 border-amber-400/90 rounded-2xl px-6 py-4 max-w-md w-full shadow-2xl flex flex-col items-center text-center gap-2.5">
+            <div className="flex items-center justify-between w-full text-xs font-mono">
+              <span className="flex items-center gap-1.5 text-amber-300 font-bold uppercase">
+                {hud.dropPhase === 'in_plane' ? (
+                  <>
+                    <Plane className="w-4 h-4 text-amber-400" />
+                    <span>Bermuda Cargo Dropship</span>
+                  </>
+                ) : hud.dropPhase === 'freefall' ? (
+                  <>
+                    <Wind className="w-4 h-4 text-sky-400" />
+                    <span>Skydiving Freefall</span>
+                  </>
+                ) : (
+                  <>
+                    <Wind className="w-4 h-4 text-emerald-400" />
+                    <span>Parachute Deployed</span>
+                  </>
+                )}
+              </span>
+              <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-slate-100 font-bold">
+                ALTITUDE: {hud.altitudeMeters}m
+              </span>
+            </div>
+
+            {/* Altimeter Progress Bar */}
+            <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden border border-slate-800">
+              <div
+                className={`h-full transition-all duration-150 ${
+                  hud.dropPhase === 'parachute'
+                    ? 'bg-emerald-400'
+                    : 'bg-amber-400'
+                }`}
+                style={{
+                  width: `${Math.max(4, Math.min(100, (hud.altitudeMeters / 82) * 100))}%`,
+                }}
+              />
+            </div>
+
+            {hud.dropPhase === 'in_plane' ? (
+              <button
+                type="button"
+                onClick={() => actionRef.current?.ejectOrDeployParachute()}
+                className="w-full py-2.5 px-5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs md:text-sm uppercase tracking-wider rounded-xl shadow-lg transition-colors flex items-center justify-center gap-2"
+              >
+                <Plane className="w-4 h-4" />
+                <span>EJECT / JUMP FROM PLANE [SPACE / F]</span>
+              </button>
+            ) : hud.dropPhase === 'freefall' ? (
+              <button
+                type="button"
+                onClick={() => actionRef.current?.ejectOrDeployParachute()}
+                className="w-full py-2.5 px-5 bg-sky-500 hover:bg-sky-400 text-slate-950 font-black text-xs md:text-sm uppercase tracking-wider rounded-xl shadow-lg transition-colors flex items-center justify-center gap-2"
+              >
+                <Wind className="w-4 h-4" />
+                <span>OPEN PARACHUTE [SPACE / F]</span>
+              </button>
+            ) : (
+              <div className="text-xs font-semibold text-emerald-300">
+                Steer with WASD & Mouse to glide to your landing spot — weapons
+                unlock upon landing!
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Ground Loot Pickup Prompt (Press F to Loot) */}
         {hud.nearbyLoot && (
           <button
@@ -640,6 +725,9 @@ export function CombatHud({
           </div>
         </div>
       </div>
+
+      {/* Interactive Virtual Analog Joystick (Touch + Live Keyboard WASD) & On-Screen Control Buttons */}
+      <TouchControlsHud hud={hud} actionRef={actionRef} />
     </div>
   );
 }

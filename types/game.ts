@@ -125,16 +125,24 @@ export interface CompanionState {
   targetId: string | null;
 }
 
+export type ContenderDropPhase =
+  | 'in_plane'
+  | 'freefall'
+  | 'parachute'
+  | 'landed';
+
 export interface ContenderState {
   id: string;
   name: string;
   isBot: boolean;
   isLocalPlayer: boolean;
+  dropPhase: ContenderDropPhase;
+  planeJumpTimeSec?: number;
   x: number;
   y: number;
   z: number;
   vx: number;
-  vy: number; // Jump vertical velocity
+  vy: number; // Jump / Skydive vertical velocity
   vz: number;
   isGrounded: boolean;
   isSprinting: boolean;
@@ -311,6 +319,10 @@ export interface CombatHudSnapshot {
   isPointerLocked: boolean;
   isAds: boolean;
   isSprinting: boolean;
+  joystickVector: { x: number; y: number };
+  dropPhase: ContenderDropPhase;
+  altitudeMeters: number;
+  planePos: { x: number; z: number; active: boolean };
   zoomLevel: 1 | 2 | 4;
   pitchDeg: number;
   currentZoneName: string;
