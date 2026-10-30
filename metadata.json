@@ -1,0 +1,6 @@
+{
+  "name": "Heartdrop Royale",
+  "description": "A vibrant 3D third-person multiplayer dating battle royale where 10 solo contenders scavenge weapons, summon Cute Virtual Girl or Dog helper bots from free vending machines, survive a shrinking storm, and compete in compatibility challenges to win virtual dates.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
