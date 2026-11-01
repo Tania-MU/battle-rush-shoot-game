@@ -1,24 +1,5 @@
 import type {Metadata} from 'next';
-import {Outfit, Plus_Jakarta_Sans, JetBrains_Mono} from 'next/font/google';
 import './globals.css';
-
-const outfit = Outfit({
-  subsets: ['latin'],
-  weight: ['600', '700', '800'],
-  variable: '--font-display',
-});
-
-const jakarta = Plus_Jakarta_Sans({
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
-  variable: '--font-sans',
-});
-
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ['latin'],
-  weight: ['500', '700'],
-  variable: '--font-mono',
-});
 
 export const metadata: Metadata = {
   title: 'Heartdrop Royale — 3D Dating Battle Royale',
@@ -42,7 +23,7 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
   return (
     <html
       lang="en"
-      className={`${outfit.variable} ${jakarta.variable} ${jetbrainsMono.variable} dark`}
+      className="dark [--font-display:system-ui,-apple-system,sans-serif] [--font-sans:system-ui,-apple-system,sans-serif] [--font-mono:ui-monospace,SFMono-Regular,monospace]"
     >
       <body
         suppressHydrationWarning
