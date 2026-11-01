@@ -377,7 +377,7 @@ export function HeartdropRoyaleApp() {
       {/* STATE 1: TITLE SCREEN & COLLAPSIBLE HUB DOCK */}
       {screenState === GameScreenState.TITLE && (
         <>
-          <div className="fixed top-6 left-1/2 -translate-x-1/2 z-20 pointer-events-none flex flex-col items-center text-center w-full max-w-2xl px-4">
+          <div className="fixed top-4 sm:top-6 inset-x-0 mx-auto z-20 pointer-events-none flex flex-col items-center text-center w-full max-w-2xl px-4">
             <svg
               viewBox="0 0 560 96"
               className="w-full max-w-md h-auto drop-shadow-2xl"

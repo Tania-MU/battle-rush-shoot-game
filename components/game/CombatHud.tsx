@@ -196,32 +196,34 @@ export function CombatHud({
       {/* FREE FIRE KILL NOTIFICATION BANNER (Animated Top-Center Overlay) */}
       <AnimatePresence>
         {hud.killBanner && (
-          <motion.div
-            key={hud.killBanner.id}
-            initial={{ opacity: 0, scale: 0.6, y: -28 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.85, y: -16 }}
-            transition={{ type: 'spring', stiffness: 420, damping: 24 }}
-            className="fixed top-28 left-1/2 -translate-x-1/2 z-30 pointer-events-none flex flex-col items-center"
-          >
-            <div className="relative bg-gradient-to-r from-amber-500/20 via-rose-600/95 to-amber-500/20 border-2 border-amber-400 px-8 py-3 rounded-2xl shadow-2xl flex flex-col items-center text-center">
-              <div className="flex items-center gap-2 text-amber-300 mb-0.5">
-                <Flame className="w-5 h-5 fill-amber-400 text-amber-200" />
-                <Skull className="w-6 h-6 text-white" />
-                <Flame className="w-5 h-5 fill-amber-400 text-amber-200" />
+          <div className="fixed top-28 inset-x-0 z-30 pointer-events-none flex justify-center px-4">
+            <motion.div
+              key={hud.killBanner.id}
+              initial={{ opacity: 0, scale: 0.6, y: -28 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.85, y: -16 }}
+              transition={{ type: 'spring', stiffness: 420, damping: 24 }}
+              className="flex flex-col items-center"
+            >
+              <div className="relative bg-gradient-to-r from-amber-500/20 via-rose-600/95 to-amber-500/20 border-2 border-amber-400 px-8 py-3 rounded-2xl shadow-2xl flex flex-col items-center text-center">
+                <div className="flex items-center gap-2 text-amber-300 mb-0.5">
+                  <Flame className="w-5 h-5 fill-amber-400 text-amber-200" />
+                  <Skull className="w-6 h-6 text-white" />
+                  <Flame className="w-5 h-5 fill-amber-400 text-amber-200" />
+                </div>
+                <div className="text-xl md:text-2xl font-black tracking-wider text-white uppercase drop-shadow">
+                  {hud.killBanner.headline}
+                </div>
+                <div className="text-xs font-bold text-amber-200 mt-0.5">
+                  Eliminated{' '}
+                  <span className="text-white underline decoration-amber-300">
+                    {hud.killBanner.victimName}
+                  </span>{' '}
+                  · {hud.killBanner.weaponName}
+                </div>
               </div>
-              <div className="text-xl md:text-2xl font-black tracking-wider text-white uppercase drop-shadow">
-                {hud.killBanner.headline}
-              </div>
-              <div className="text-xs font-bold text-amber-200 mt-0.5">
-                Eliminated{' '}
-                <span className="text-white underline decoration-amber-300">
-                  {hud.killBanner.victimName}
-                </span>{' '}
-                · {hud.killBanner.weaponName}
-              </div>
-            </div>
-          </motion.div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
@@ -267,19 +269,53 @@ export function CombatHud({
                 />
               );
             })}
-            {/* Contenders */}
+            {/* Contenders (Enemy Red Dots & Local Player Directional Navigation Arrow/Triangle) */}
             {hud.contenderRadar.map((c) => {
               if (!c.alive) return null;
               const cx = 50 + (c.x / ARENA_RADIUS) * 46;
               const cz = 50 + (c.z / ARENA_RADIUS) * 46;
+
+              if (c.isLocal) {
+                // Convert 3D yaw rotationY (0 = +Z South, PI = -Z North, PI/2 = +X East) to 2D radar clockwise degrees (0 deg = Up/-Z)
+                const headingDeg =
+                  180 - (hud.playerPos.rotationY * 180) / Math.PI;
+                return (
+                  <div
+                    key={c.id}
+                    className="absolute z-10 pointer-events-none"
+                    style={{
+                      left: `${cx}%`,
+                      top: `${cz}%`,
+                      transform: `translate(-50%, -50%) rotate(${headingDeg}deg)`,
+                    }}
+                    title="Your Position & Heading"
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="w-5 h-5 overflow-visible drop-shadow"
+                    >
+                      {/* Forward Field-of-View Cone */}
+                      <path
+                        d="M12 12 L4 1 A11 11 0 0 1 20 1 Z"
+                        fill="rgba(52, 211, 153, 0.28)"
+                      />
+                      {/* Free Fire Style Directional Navigation Arrow / Triangle */}
+                      <polygon
+                        points="12,2 19,19 12,15 5,19"
+                        fill="#10B981"
+                        stroke="#FFFFFF"
+                        strokeWidth="2"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </div>
+                );
+              }
+
               return (
                 <div
                   key={c.id}
-                  className={`absolute rounded-full ${
-                    c.isLocal
-                      ? 'w-2.5 h-2.5 bg-emerald-400 ring-2 ring-white'
-                      : 'w-1.5 h-1.5 bg-rose-400'
-                  }`}
+                  className="absolute w-1.5 h-1.5 rounded-full bg-rose-400"
                   style={{
                     left: `${cx}%`,
                     top: `${cz}%`,

@@ -108,16 +108,16 @@ export function BottomControlDock({
 
   return (
     <div
-      className="fixed z-30 left-1/2 -translate-x-1/2 bottom-5 w-full max-w-[min(940px,94vw)] pointer-events-auto transition-transform duration-200"
+      className="fixed z-30 inset-x-0 mx-auto bottom-3 sm:bottom-5 w-full max-w-[940px] px-3 sm:px-5 pointer-events-auto transition-transform duration-200"
       style={{
         transform: collapsed
-          ? 'translate(-50%, calc(100% - 38px))'
-          : 'translate(-50%, 0)',
+          ? 'translateY(calc(100% - 38px))'
+          : 'translateY(0)',
       }}
     >
       {/* Top Collapse / Expand Handle Bar */}
-      <div className="flex items-center justify-between px-2 mb-1.5">
-        <div className="bg-slate-950/90 border border-slate-800 rounded-lg px-3 py-1 text-xs text-slate-300 flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-1 mb-1.5">
+        <div className="bg-slate-950/90 border border-slate-800 rounded-lg px-3 py-1 text-xs text-slate-300 flex flex-wrap items-center gap-1.5 sm:gap-2 max-w-full">
           <span className="font-semibold text-rose-400">
             {profile.displayName}
           </span>
@@ -138,7 +138,7 @@ export function BottomControlDock({
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 ml-auto">
           <button
             type="button"
             onClick={onToggleMute}
